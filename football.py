@@ -2,13 +2,91 @@ import nflgame
 import argparse
 import xlrd
 import string
+import pymysql
 
-def getNflgameName(name):
-    if name.upper() == 'ARI':
-        return 'ARZ'
-    else:
-        return name.upper()
 
+class Pick10Inf:
+    def __init__(self):
+        self.conn = pymysql.connect(host='localhost', port=3306, user='dan', passwd='0ldn0teb00k', db='pick10')
+
+    def getNflgameName(self, name):
+        if name.upper() == 'ARI':
+            return 'ARZ'
+        else:
+            return name.upper()
+
+    def checkPlayer(self, name):
+        cur = self.conn.cursor()
+        sql = "SELECT * FROM players where name = '%s'" % name.upper()
+        cur.execute(sql)
+        if cur.fetchone() == None:
+            print "Player name %s not in db" % name.upper() 
+            insert_sql = "INSERT INTO players (name) VALUES ('%s')" % name.upper()
+            print insert_sql
+            cur.execute(insert_sql)
+            cur.connection.commit()
+
+        cur.close()
+
+    def checkTeam(self, teamname):
+        cur = self.conn.cursor()
+        sql = "SELECT * FROM teams where team = '%s'" % self.getNflgameName(teamname)
+
+        #print sql
+
+        cur.execute(sql)
+        if cur.fetchone() == None:
+            print "Team name %s not in db" % self.getNflgameName(teamname)
+            insert_sql = "INSERT INTO teams (team) VALUES ('%s')" % self.getNflgameName(teamname)
+            print insert_sql
+            cur.execute(insert_sql)
+            cur.connection.commit()
+        #else:
+            #print "Team name %s is in db" % self.getNflgameName(teamname)
+
+        cur.close()
+
+    def addGame(self, week, home, away):
+        self.checkTeam(home)
+        self.checkTeam(away)
+        cur = self.conn.cursor()
+        sql = "SELECT * FROM games where home_team = '%s' and away_team = '%s' and week=%d" % (self.getNflgameName(home), self.getNflgameName(away), week)
+
+        #print sql
+        cur.execute(sql)
+        if cur.fetchone() == None:
+            print "game doesn't exist"
+            insert_sql = "INSERT INTO games (week, home_team, away_team) VALUES (%d, '%s', '%s')" % (week, self.getNflgameName(home), self.getNflgameName(away))
+            print insert_sql
+            cur.execute(insert_sql)
+            cur.connection.commit()
+        else:
+            print "game exists"
+
+    def addSpread(self, week, team, spread):
+        self.checkTeam(team)
+        cur = self.conn.cursor()
+
+        insert_sql = "INSERT INTO spreads (team, week, spread) VALUES ('%s', %d, %f) ON DUPLICATE KEY UPDATE spread=%f" % (self.getNflgameName(team), week, spread, spread)
+        #print insert_sql
+        cur.execute(insert_sql)
+        cur.connection.commit()
+        
+        cur.close()
+
+
+    def addPick(self, week, player, team, points):
+        self.checkTeam(team)
+        self.checkPlayer(player)
+        cur = self.conn.cursor()
+
+        insert_sql = "INSERT INTO picks (name, team, week, points) VALUES ('%s', '%s', %d, %d) ON DUPLICATE KEY UPDATE points=%d" % (player, self.getNflgameName(team), week, points, points)
+        #print insert_sql
+
+        cur.execute(insert_sql)
+        cur.connection.commit()
+        
+        cur.close()
 
 
 parser= argparse.ArgumentParser(description='NFL Pick10 status.')
@@ -16,6 +94,8 @@ parser= argparse.ArgumentParser(description='NFL Pick10 status.')
 parser.add_argument('-i', '--input', help='Weekly Excel Spreadsheet', required=True)
 
 args = parser.parse_args()
+
+pick10 = Pick10Inf()
 
 wb = xlrd.open_workbook(args.input)
 from xlrd.sheet import ctype_text
@@ -56,10 +136,14 @@ for row_idx in range(3, sheet.nrows):    # Iterate through rows
         break
 
     picks[name_obj.value] = []
+    points = 10
     for col_idx in range(1, 11):  # Iterate through columns
         cell_obj = sheet.cell(row_idx, col_idx)  # Get cell object by row, col
-        picks[name_obj.value].insert(0, cell_obj.value.strip())
-
+        team = cell_obj.value.strip()
+        picks[name_obj.value].insert(0, team)
+        if team:
+            pick10.addPick(int(week), name_obj.value, team, points)
+        points = points - 1
         #print ('Column: [%s] cell_obj: [%s]' % (col_idx, cell_obj))
 
 spreads = []
@@ -107,14 +191,6 @@ print spreads
 
 print len(spreads)
 
-team_spread = {}
-
-for x in spreads:
-    team_spread[x['und'].upper()] = x['spread']
-    team_spread[x['fav'].upper()] = -x['spread']
-   
-print team_spread
-
 # get schedule and results for the week
 games = nflgame.games(2015,week=int(week))
 
@@ -125,8 +201,19 @@ for g in games:
     diff2 = g.score_home - g.score_away
     scores[g.away] = diff1;
     scores[g.home] = diff2;
+    pick10.addGame(int(week), g.home, g.away)
 
 print scores
+
+team_spread = {}
+
+for x in spreads:
+    team_spread[x['und'].upper()] = x['spread']
+    pick10.addSpread(int(week), x['und'], x['spread'])
+    team_spread[x['fav'].upper()] = -x['spread']
+    pick10.addSpread(int(week), x['fav'], -x['spread'])
+   
+print team_spread
 
 covers = {}
 for key, value in scores.iteritems():
