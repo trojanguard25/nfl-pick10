@@ -97,12 +97,6 @@ class Pick10Inf:
         for g in games:
             print g
             self.addGame(week, g.home, g.away)
-            #insert_sql = "INSERT INTO games (home_team, away_team, week, season, home_score, away_score) VALUES ('%s', '%s', %d, %d, %d, %d) ON DUPLICATE KEY UPDATE home_score=%d, away_score=%d" % (self.getNflgameName(g.home), self.getNflgameName(g.away), week, self.season, g.score_home, g.score_away, g.score_home, g.score_away)
-        
-            #cur.execute(insert_sql)
-            #cur.connection.commit()
-        
-        #cur.close()
 
     def updatePicks(self):
         cur = self.conn.cursor()
